@@ -43,17 +43,6 @@ def extract_sections_and_subsections(pdf_path):
     if current_title:
         extracted_data["content"].append({"section": current_title, "text": "\n".join(current_content).strip()})
 
-    # Extract tables in the same order as they appear in the document
-    extracted_data["tables"] = []
-    with pdfplumber.open(pdf_path) as pdf:
-        for page_num, page in enumerate(pdf.pages, 1):
-            tables = page.extract_tables()
-            for table in tables:
-                if table:  # Only store non-empty tables
-                    structured_table = [
-                        [str(cell).strip() if cell else "" for cell in row] for row in table
-                    ]
-                    extracted_data["tables"].append({"page": page_num, "table": structured_table})
 
     return extracted_data
 

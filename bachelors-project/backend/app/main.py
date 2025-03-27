@@ -1,49 +1,37 @@
 import os
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Request
 from app.parsers.pdfParser import extract_sections_and_subsections
-from app.parsers.pdf2docx import convert_pdf_to_docx
 from app.parsers.pdfParserElias import extract_everything
 import shutil
-from app.llm import process_sections
 from fastapi.responses import StreamingResponse
 from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse
-import io
-import asyncio
-import traceback
-from app.parsers.docxParser import extract_sections_from_docx
-from google.cloud import documentai_v1 as documentai
-from google.api_core.client_options import ClientOptions
+from fastapi.middleware.cors import CORSMiddleware
+from app.step1.llm_sections import analyze_pdf_sections
+from app.step2.parse_sections import parse_evaluation_components
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
+
 @app.get("/")
 def read_root():
     return {"message": "FastAPI Backend is Running!"}
 
 
-UPLOAD_DIR = "backend/uploads"
+UPLOAD_DIR = "app/uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)  
 
 
-@app.post("/analyze-pdf/")
-async def analyze_pdf(file: UploadFile = File(...)):
-    file_path = os.path.join(UPLOAD_DIR, file.filename) 
-
-    # Save uploaded file
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    # Parse the file to get subsections
-    subsections = extract_sections_and_subsections(file_path)
-    
-    # Process all sections in parallel using the predefined criteria
-    matching_sections = await process_sections(subsections)
-    
-    return {"matching_sections": matching_sections}
-
-
-
 # Elias -----------------------------------------------
+
+
 
 @app.post("/upload/")
 async def upload_pdf(file: UploadFile = File(...)):
@@ -57,7 +45,6 @@ async def upload_pdf(file: UploadFile = File(...)):
     subsections = extract_sections_and_subsections(file_path)
     
     return {"subsections": subsections}
-
 
 
 
@@ -82,40 +69,12 @@ async def upload_p(file: UploadFile = File(...)):
 
 
 
-
 # AMMAR -----------------------------------------------
 
-
-@app.post("/convert-pdf-to-docx/")
-async def convert_pdf_to_docx_endpoint(file: UploadFile = File(...)):
+@app.post("/analyze-pdf-sections/")
+async def analyze_pdf_sections_endpoint(file: UploadFile = File(...)):
     """
-    Converts a PDF file to DOCX format and returns the converted file for download.
-    """
-    # Save uploaded file
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-    
-    try:
-        # Convert PDF to DOCX
-        docx_path = convert_pdf_to_docx(file_path)
-        
-        # Return the converted file
-        return FileResponse(
-            path=docx_path,
-            filename=os.path.basename(docx_path),
-            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"error": f"Conversion failed: {str(e)}"}
-        )
-
-@app.post("/llm-pdf-analysis/")
-async def llm_pdf_analysis(file: UploadFile = File(...)):
-    """
-    Analyzes a PDF using LLM to process each page and extract relevant sections.
+    Analyzes PDF sections using LLM to identify sections that match specific criteria.
     """
     file_path = os.path.join(UPLOAD_DIR, file.filename) 
 
@@ -123,50 +82,45 @@ async def llm_pdf_analysis(file: UploadFile = File(...)):
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    # Use the LLM-based parser
-    from app.parsers.llm_parse import extract_sections_with_llm
-    result = await extract_sections_with_llm(file_path)
-    
-    return result
+    try:
+        # Parse the file to get subsections
+        parsed_data = extract_everything(file_path)
+        
+        # Process sections to find those that match criteria
+        analysis_results = await analyze_pdf_sections({"subsections": parsed_data})
+        
+        return analysis_results
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Analysis failed: {str(e)}"}
+        )
 
-@app.post("/parse-docx/")
-async def parse_docx(file: UploadFile = File(...)):
+@app.post("/parse-evaluation-components/")
+async def parse_evaluation_components_endpoint(file: UploadFile = File(...)):
     """
-    Parses a DOCX file and extracts sections, subsections, and their content.
+    Full pipeline: parses PDF, analyzes sections, and extracts evaluation components in one step.
     """
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
-    
+    file_path = os.path.join(UPLOAD_DIR, file.filename) 
+
     # Save uploaded file
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-    
-    # Parse the DOCX file
-    extracted_data = extract_sections_from_docx(file_path)
-    
-    return JSONResponse(content=extracted_data)
 
-@app.post("/ocr-document/")
-async def ocr_document(file: UploadFile = File(...)):
-    """
-    Process a document using Google Document AI OCR and extract hierarchical sections
-    """
     try:
-        # Save uploaded file temporarily
-        file_path = os.path.join(UPLOAD_DIR, file.filename)
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-
-        # Import and use the document processor module
-        from app.document_ai.document_processor import process_document
+        # Parse the file to get subsections
+        parsed_data = extract_everything(file_path)
         
-        # Process the document
-        result = process_document(file_path)
+        # Process sections to find those that match criteria
+        analysis_results = await analyze_pdf_sections({"subsections": parsed_data})
         
-        # Clean up the temporary file
-        os.remove(file_path)
+        # Extract evaluation components from matching sections
+        components_results = await parse_evaluation_components(analysis_results)
         
-        return result
-
+        return components_results
     except Exception as e:
-        return {"error": str(e), "traceback": traceback.format_exc()}
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Component extraction failed: {str(e)}"}
+        )
 

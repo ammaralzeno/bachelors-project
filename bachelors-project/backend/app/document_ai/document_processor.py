@@ -111,6 +111,7 @@ def get_text(text_anchor, text):
 def extract_hierarchical_sections(paragraphs):
     """
     Extract hierarchical sections from paragraphs based on section numbering patterns
+    Focuses only on significant section titles and ignores small numbered elements
     
     Args:
         paragraphs: List of paragraph objects with text content
@@ -161,7 +162,6 @@ def extract_hierarchical_sections(paragraphs):
         for pattern_index, pattern in enumerate(section_patterns):
             match = re.match(pattern, text)
             if match:
-                is_section_header = True
                 section_number = match.group(1)
                 section_title = match.group(2) if len(match.groups()) > 1 else ""
                 
@@ -176,6 +176,25 @@ def extract_hierarchical_sections(paragraphs):
                     section_level = 1
                 elif pattern_index == 5:  # (a) Parenthesis
                     section_level = 2
+                
+                # NEW: Filter for significant section headers
+                # Check if section title has minimum length or contains important words
+                title_text = section_title.strip()
+                
+                # 1. Check title length (ignore very short titles that are likely not real sections)
+                min_title_length = 3  # Minimum number of words for a valid section title
+                word_count = len(title_text.split())
+                
+                # 2. Check for important keywords often found in true section titles
+                important_keywords = ['introduction', 'summary', 'conclusion', 'background', 'method', 
+                                     'procedure', 'result', 'discussion', 'reference', 'appendix',
+                                     'scope', 'purpose', 'objective', 'requirement', 'definition',
+                                     'information', 'overview', 'specification', 'description']
+                
+                contains_keyword = any(keyword in title_text.lower() for keyword in important_keywords)
+                
+                # Set as section header if it passes our criteria
+                is_section_header = (word_count >= min_title_length) or contains_keyword
                 
                 break
         
