@@ -10,7 +10,10 @@ from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse
 import io
 import asyncio
+import traceback
 from app.parsers.docxParser import extract_sections_from_docx
+from google.cloud import documentai_v1 as documentai
+from google.api_core.client_options import ClientOptions
 
 app = FastAPI()
 @app.get("/")
@@ -141,4 +144,29 @@ async def parse_docx(file: UploadFile = File(...)):
     extracted_data = extract_sections_from_docx(file_path)
     
     return JSONResponse(content=extracted_data)
+
+@app.post("/ocr-document/")
+async def ocr_document(file: UploadFile = File(...)):
+    """
+    Process a document using Google Document AI OCR and extract hierarchical sections
+    """
+    try:
+        # Save uploaded file temporarily
+        file_path = os.path.join(UPLOAD_DIR, file.filename)
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # Import and use the document processor module
+        from app.document_ai.document_processor import process_document
+        
+        # Process the document
+        result = process_document(file_path)
+        
+        # Clean up the temporary file
+        os.remove(file_path)
+        
+        return result
+
+    except Exception as e:
+        return {"error": str(e), "traceback": traceback.format_exc()}
 
